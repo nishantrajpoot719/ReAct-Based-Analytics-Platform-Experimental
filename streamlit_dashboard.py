@@ -700,8 +700,6 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
         return
     st.session_state[f"{prefix}_full_query_text"] = ""
 
-    _original_df = getattr(trend_breakdown, "_ticket_dataframe", None)
-
     # Bind tools to filtered dataframe if provided
     if allowed_df is not None:
         trend_breakdown.register_ticket_dataframe(allowed_df)
@@ -787,9 +785,6 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
         if status_placeholder:
             status_placeholder.error(f"Agent run failed: {exc}")
 
-        # Restore original global dataframe
-        if _original_df is not None:
-            trend_breakdown.register_ticket_dataframe(_original_df)
 
         if user_msgs:
             user_msgs.pop()
@@ -811,9 +806,6 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
         if assistant_stub_index is not None and assistant_msgs:
             assistant_msgs.pop()
 
-        # Restore original global dataframe
-        if _original_df is not None:
-            trend_breakdown.register_ticket_dataframe(_original_df)
 
         if status_placeholder:
             status_placeholder.error("Agent did not return a response.")
@@ -925,7 +917,7 @@ if __name__ == "__main__":
         prompt = st.chat_input("Ask anything about the tickets", key="chat_prompt")
         if prompt:
             st.session_state.full_query_text = prompt
-            run_agent_for("global", stream_area, conversation_placeholder, live_updates_placeholder)
+            run_agent_for("global", allowed_df=st.session_state.df, stream_area = stream_area, conversation_placeholder = conversation_placeholder, live_updates_placeholder = live_updates_placeholder)
     with tab_table:
 
         st.session_state.df = load_ticket_dataframe(DATA_URL)
@@ -1150,7 +1142,7 @@ if __name__ == "__main__":
             prompt = st.chat_input("Ask about these tickets", key="filtered_chat")
             if prompt:
                 st.session_state["filtered_full_query_text"] = prompt
-                run_agent_for("filtered", allowed_df=filtered_df, conversation_placeholder=chat_box)
+                run_agent_for("filtered", allowed_df=filtered_df, stream_area = stream_area, conversation_placeholder=chat_box, live_updates_placeholder = live_updates_placeholder)
 
 
         with st.expander("Summarise Filtered Tickets"):
@@ -1189,6 +1181,7 @@ if __name__ == "__main__":
         st.divider()
         st.write("© 2025 Country Delight")
         st.write("Built with ❤️ by Digital Innovations Team | Country Delight")
+
 
 
 
