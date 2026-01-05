@@ -916,7 +916,7 @@ if __name__ == "__main__":
         stream_area = st.container()
         prompt = st.chat_input("Ask anything about the tickets", key="chat_prompt")
         if prompt:
-            st.session_state.full_query_text = prompt
+            st.session_state["global_full_query_text"] = prompt
             run_agent_for("global", allowed_df=st.session_state.df, stream_area = stream_area, conversation_placeholder = conversation_placeholder, live_updates_placeholder = live_updates_placeholder)
     with tab_table:
 
@@ -1181,6 +1181,7 @@ if __name__ == "__main__":
         st.divider()
         st.write("© 2025 Country Delight")
         st.write("Built with ❤️ by Digital Innovations Team | Country Delight")
+
 
 
 
