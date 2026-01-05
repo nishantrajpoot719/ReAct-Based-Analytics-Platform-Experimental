@@ -901,7 +901,7 @@ if __name__ == "__main__":
     if os.path.exists(logo_path):
         st.image(logo_path, width=220)
     st.markdown(
-        "<div class='dashboard-title'>Customer Support Ticket Analytics</div>",
+        "<div class='dashboard-title'>Customer Support Ticket Analytics - Experimental</div>",
         unsafe_allow_html=True,
     )
     st.markdown("##### AI-powered analytics over customer support data")
@@ -1181,6 +1181,7 @@ if __name__ == "__main__":
         st.divider()
         st.write("© 2025 Country Delight")
         st.write("Built with ❤️ by Digital Innovations Team | Country Delight")
+
 
 
 
