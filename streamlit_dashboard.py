@@ -703,8 +703,6 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
     # Bind tools to filtered dataframe if provided
     if allowed_df is not None:
         trend_breakdown.register_ticket_dataframe(allowed_df)
-        calculate_metrics.register_ticket_dataframe(allowed_df)
-        get_examples.register_ticket_dataframe(allowed_df)
 
     user_msgs = st.session_state[f"{prefix}_user_messages"]
     assistant_msgs = st.session_state[f"{prefix}_assistant_messages"]
@@ -1181,6 +1179,7 @@ if __name__ == "__main__":
         st.divider()
         st.write("© 2025 Country Delight")
         st.write("Built with ❤️ by Digital Innovations Team | Country Delight")
+
 
 
 
