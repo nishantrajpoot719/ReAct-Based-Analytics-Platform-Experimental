@@ -44,6 +44,37 @@ if not agent_logger.handlers:
     agent_logger.addHandler(handler)
     agent_logger.setLevel(logging.INFO)
 
+import hashlib
+
+def df_fingerprint(df: pd.DataFrame) -> str:
+    if df is None or df.empty:
+        return "empty"
+    return hashlib.md5(
+        pd.util.hash_pandas_object(df, index=True).values
+    ).hexdigest()
+
+def init_agent_state(prefix: str):
+    defaults = {
+        "user_messages": [],
+        "assistant_messages": [],
+        "chart_spec": [],
+        "agent_last_step_trace": "",
+        "agent_tool_events": [],
+        "filters_created": [],
+        "full_query_text": "",
+        "vector_scope_hash": None,
+    }
+
+    for k, v in defaults.items():
+        key = f"{prefix}_{k}"
+        if key not in st.session_state:
+            st.session_state[key] = v
+
+init_agent_state("global")
+init_agent_state("filtered")
+
+
+
 class MainReactAgent(dspy.Signature):
     """
     SYSTEM ROLE:
@@ -473,27 +504,40 @@ def ensure_multiselect_state(key: str, options: List) -> None:
         st.session_state[key] = valid
 
 
-def render_conversation(placeholder):
-    """Render the chat history in the supplied placeholder."""
-    placeholder.empty()
-    with placeholder.container():
-        user_history = st.session_state.user_messages
-        assistant_history = st.session_state.assistant_messages
-        if user_history or assistant_history:
-            for user_msg, assistant_msg in zip_longest(user_history, assistant_history):
-                if user_msg:
-                    with st.chat_message("user"):
-                        st.markdown(user_msg)
-                if assistant_msg:
-                    with st.chat_message("assistant"):
-                        render_assistant_message(assistant_msg)
-        if st.session_state.agent_last_step_trace:
-            with st.expander("Latest agent steps"):
-                st.markdown(st.session_state.agent_last_step_trace)
-        tool_events = st.session_state.get("agent_tool_events", [])
-        if tool_events:
-            with st.expander("Tool call trace"):
-                st.markdown("\n".join(f"- {event}" for event in tool_events))
+def render_conversation_for(prefix, placeholder):
+    try:
+        placeholder.empty()
+        with placeholder.container():
+            user_history = st.session_state.get(f"{prefix}_user_messages", [])
+            assistant_history = st.session_state.get(f"{prefix}_assistant_messages", [])
+
+            if user_history or assistant_history:
+                for user_msg, assistant_msg in zip_longest(user_history, assistant_history):
+                    if user_msg:
+                        with st.chat_message("user"):
+                            st.markdown(user_msg)
+
+                    if assistant_msg:
+                        with st.chat_message("assistant"):
+                            # This preserves JSON parsing, charts, metrics, examples etc
+                            render_assistant_message(assistant_msg)
+
+            # === Parity: Agent reasoning trace ===
+            last_trace = st.session_state.get(f"{prefix}_agent_last_step_trace")
+            if last_trace:
+                with st.expander("Latest agent steps"):
+                    st.markdown(last_trace)
+
+            # === Parity: Tool call trace ===
+            tool_events = st.session_state.get(f"{prefix}_agent_tool_events", [])
+            if tool_events:
+                with st.expander("Tool call trace"):
+                    st.markdown("\n".join(f"- {event}" for event in tool_events))
+
+    except Exception as exc:
+        # Same crash-protection behavior as original
+        st.error("Failed to render chat")
+        st.write(exc)
 
 
 def _parse_assistant_payload(final_answer: Any) -> Optional[Dict[str, Any]]:
@@ -650,107 +694,89 @@ def _drive_download(file_id: str, out_path: str, api_key: str):
                     f.write(chunk)
     return out_path
 
-def main_agent_run(stream_area=None, conversation_placeholder=None, live_updates_placeholder=None):
-    query = st.session_state.get("full_query_text", "").strip()
+def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeholder=None, live_updates_placeholder=None):
+    query = st.session_state.get(f"{prefix}_full_query_text", "").strip()
     if not query:
         return
-    st.session_state.full_query_text = ""
+    st.session_state[f"{prefix}_full_query_text"] = ""
 
-    prior_user_history = st.session_state.user_messages.copy()
+    # Bind tools to filtered dataframe if provided
+    if allowed_df is not None:
+        trend_breakdown.register_ticket_dataframe(allowed_df)
+        calculate_metrics.register_ticket_dataframe(allowed_df)
+        get_examples.register_ticket_dataframe(allowed_df)
+
+    user_msgs = st.session_state[f"{prefix}_user_messages"]
+    assistant_msgs = st.session_state[f"{prefix}_assistant_messages"]
+
+    prior_user_history = user_msgs.copy()
     prior_assistant_history = [
         msg.get("content") if isinstance(msg, dict) and "content" in msg else msg
-        for msg in st.session_state.assistant_messages
+        for msg in assistant_msgs
     ]
 
-    status_placeholder = None
-    steps_placeholder = None
-    if stream_area is not None:
-        status_placeholder = stream_area.empty()
-        steps_placeholder = stream_area.empty()
-    else:
-        status_placeholder = st.empty()
-        steps_placeholder = st.empty()
+    status_placeholder = stream_area.empty() if stream_area else st.empty()
+    steps_placeholder = stream_area.empty() if stream_area else st.empty()
 
     aggregated_streams = defaultdict(str)
-    captured_chart_specs: List[Dict[str, Any]] = []
+    captured_chart_specs = []
     final_prediction = None
-    status_updates: List[str] = []
-    assistant_stub_index: Optional[int] = None
+    status_updates = []
+    assistant_stub_index = None
     assistant_stream_placeholder = None
-    live_updates_container = None
 
-    if live_updates_placeholder is not None:
-        live_updates_container = live_updates_placeholder.container()
+    user_msgs.append(query)
+    with st.chat_message("user"):
+        st.markdown(query)
 
-    def _live_parent():
-        if live_updates_container is not None:
-            return live_updates_container
-        return nullcontext()
-
-    agent_logger.info("QUERY: %s", query)
-    st.session_state.user_messages.append(query)
-    st.session_state.chart_spec = []
     plot_chart.drain_chart_buffer()
 
-    with _live_parent():
-        with st.chat_message("user"):
-            st.markdown(query)
-
     assistant_stub = {"content": "", "chart_specs": []}
-    st.session_state.assistant_messages.append(assistant_stub)
-    assistant_stub_index = len(st.session_state.assistant_messages) - 1
-    with _live_parent():
-        assistant_message_container = st.chat_message("assistant")
-        assistant_stream_placeholder = assistant_message_container.empty()
+    assistant_msgs.append(assistant_stub)
+    assistant_stub_index = len(assistant_msgs) - 1
+
+    with st.chat_message("assistant"):
+        assistant_stream_placeholder = st.empty()
         assistant_stream_placeholder.markdown("...")
 
     try:
         with dspy.context(
             lm=dspy.LM(
                 model="openai/gpt-oss-120b",
-                api_key= cerebras_key,
-                temperature=1, 
-                max_tokens= 32000,
+                api_key=cerebras_key,
+                temperature=1,
+                max_tokens=32000,
                 api_base="https://api.cerebras.ai/v1",
-        )):
+            )
+        ):
             for chunk in stream_main_agent(
                 user_query=query,
                 user_history=prior_user_history,
                 assistant_history=prior_assistant_history,
-                filters = st.session_state.filters_created,
+                filters=st.session_state[f"{prefix}_filters_created"],
             ):
                 if isinstance(chunk, StatusMessage):
                     status_updates.append(chunk.message)
-                    agent_logger.info("STATUS: %s", chunk.message)
                     if status_placeholder:
                         status_placeholder.markdown(
-                         "**Status Updates**\n\n" + "\n".join(f"- {msg}" for msg in status_updates)
+                            "**Status Updates**\n\n" + "\n".join(f"- {m}" for m in status_updates)
                         )
                     continue
 
                 if isinstance(chunk, StreamResponse):
                     key = (chunk.predict_name, chunk.signature_field_name)
                     aggregated_streams[key] += chunk.chunk
-                    agent_logger.info(
-                        "STREAM %s.%s: %s",
-                        chunk.predict_name,
-                        chunk.signature_field_name,
-                        chunk.chunk,
-                    )
 
                     if chunk.signature_field_name == "next_thought" and steps_placeholder:
                         steps_placeholder.markdown(
                             f"**Agent Steps**\n\n{aggregated_streams[key]}"
                         )
                     elif chunk.signature_field_name == "final_answer":
-                        text_preview = aggregated_streams[key]
-                        if assistant_stream_placeholder:
-                            assistant_stream_placeholder.markdown(text_preview or "...")
+                        assistant_stream_placeholder.markdown(aggregated_streams[key] or "...")
                     continue
 
                 if isinstance(chunk, dspy.Prediction):
                     final_prediction = chunk
-                    agent_logger.info("PREDICTION received")
 
         captured_chart_specs.extend(_collect_chart_specs_from_streams(aggregated_streams))
 
@@ -758,34 +784,38 @@ def main_agent_run(stream_area=None, conversation_placeholder=None, live_updates
             status_placeholder.success("Response ready.")
 
     except Exception as exc:
-        agent_logger.exception("Agent run failed")
         if status_placeholder:
             status_placeholder.error(f"Agent run failed: {exc}")
-        st.session_state.user_messages.pop()
-        if assistant_stub_index is not None and st.session_state.assistant_messages:
-            st.session_state.assistant_messages.pop()
+
+        if user_msgs:
+            user_msgs.pop()
+        if assistant_stub_index is not None and assistant_msgs:
+            assistant_msgs.pop()
+
         if assistant_stream_placeholder:
             assistant_stream_placeholder.error("Agent run failed. Please try again.")
-        st.session_state.agent_tool_events = status_updates
-        if live_updates_placeholder is not None:
-            live_updates_placeholder.empty()
-        if conversation_placeholder is not None:
-            render_conversation(conversation_placeholder)
+
+        st.session_state[f"{prefix}_agent_tool_events"] = status_updates
+
+        if conversation_placeholder:
+            render_conversation_for(prefix, conversation_placeholder)
         return
 
     if final_prediction is None:
-        st.session_state.user_messages.pop()
+        if user_msgs:
+            user_msgs.pop()
+        if assistant_stub_index is not None and assistant_msgs:
+            assistant_msgs.pop()
+
         if status_placeholder:
             status_placeholder.error("Agent did not return a response.")
-        if assistant_stub_index is not None and st.session_state.assistant_messages:
-            st.session_state.assistant_messages.pop()
         if assistant_stream_placeholder:
             assistant_stream_placeholder.warning("Agent did not return a response.")
-        st.session_state.agent_tool_events = status_updates
-        if live_updates_placeholder is not None:
-            live_updates_placeholder.empty()
-        if conversation_placeholder is not None:
-            render_conversation(conversation_placeholder)
+
+        st.session_state[f"{prefix}_agent_tool_events"] = status_updates
+
+        if conversation_placeholder:
+            render_conversation_for(prefix, conversation_placeholder)
         return
 
     final_answer = getattr(final_prediction, "final_answer", None)
@@ -798,11 +828,11 @@ def main_agent_run(stream_area=None, conversation_placeholder=None, live_updates
     display_payload = parsed_answer if parsed_answer is not None else final_answer
 
     buffered_specs = _normalize_chart_list(plot_chart.drain_chart_buffer())
-    existing_specs = _normalize_chart_list(st.session_state.get("chart_spec", []))
-    final_chart_specs: List[Dict[str, Any]] = []
-    _seen_chart_specs: Set[str] = set()
+    existing_specs = _normalize_chart_list(st.session_state.get(f"{prefix}_chart_spec", []))
+    final_chart_specs = []
+    _seen_chart_specs = set()
 
-    def _add_specs(specs: List[Dict[str, Any]]) -> None:
+    def _add_specs(specs):
         for spec in specs:
             normalized = plot_chart.normalize_chart_state(spec)
             if not normalized:
@@ -815,21 +845,20 @@ def main_agent_run(stream_area=None, conversation_placeholder=None, live_updates
     _add_specs(buffered_specs)
     _add_specs(existing_specs)
     _add_specs(captured_chart_specs)
+
     chart_attr = getattr(final_prediction, "chart", None)
     _add_specs(_normalize_chart_list(chart_attr))
     if parsed_answer:
         _add_specs(_normalize_chart_list(parsed_answer.get("chart")))
 
-    st.session_state.chart_spec = final_chart_specs
+    st.session_state[f"{prefix}_chart_spec"] = final_chart_specs
 
     assistant_record = {
         "content": display_payload,
         "chart_specs": final_chart_specs,
     }
-    if assistant_stub_index is not None and assistant_stub_index < len(st.session_state.assistant_messages):
-        st.session_state.assistant_messages[assistant_stub_index] = assistant_record
-    else:
-        st.session_state.assistant_messages.append(assistant_record)
+
+    assistant_msgs[assistant_stub_index] = assistant_record
 
     if assistant_stream_placeholder:
         if parsed_answer and parsed_answer.get("summary"):
@@ -839,28 +868,17 @@ def main_agent_run(stream_area=None, conversation_placeholder=None, live_updates
         else:
             assistant_stream_placeholder.markdown(json.dumps(final_answer, default=str))
 
-    if isinstance(display_payload, dict):
-        agent_logger.info("FINAL ANSWER JSON: %s", json.dumps(display_payload, default=str))
-    else:
-        agent_logger.info("FINAL ANSWER: %s", display_payload)
-    if final_chart_specs:
-        agent_logger.info("CHART SPECS CAPTURED: %s", len(final_chart_specs))
-    st.session_state.agent_last_step_trace = aggregated_streams.get(("self", "next_thought"), "").strip()
-    if st.session_state.agent_last_step_trace:
-        agent_logger.info("AGENT STEPS TRACE: %s", st.session_state.agent_last_step_trace)
+    st.session_state[f"{prefix}_agent_last_step_trace"] = aggregated_streams.get(("self", "next_thought"), "")
+    st.session_state[f"{prefix}_agent_tool_events"] = status_updates
 
     if steps_placeholder:
         steps_placeholder.markdown(
-            f"**Agent Steps**\n\n{st.session_state.agent_last_step_trace or 'No steps captured.'}"
+            f"**Agent Steps**\n\n{st.session_state[f'{prefix}_agent_last_step_trace'] or 'No steps captured.'}"
         )
 
-    st.session_state.agent_tool_events = status_updates
-    if status_updates:
-        agent_logger.info("STATUS SUMMARY: %s", " | ".join(status_updates))
-    if live_updates_placeholder is not None:
-        live_updates_placeholder.empty()
-    if conversation_placeholder is not None:
-        render_conversation(conversation_placeholder)
+    if conversation_placeholder:
+        render_conversation_for(prefix, conversation_placeholder)
+
         
         
         
@@ -891,14 +909,15 @@ if __name__ == "__main__":
     tab_agent, tab_table, tab_about = st.tabs(["# AI Assistant", "# Ticket Dashboard", "# About"])
     with tab_agent:
         conversation_placeholder = st.empty()
-        render_conversation(conversation_placeholder)
+        render_conversation_for("global", conversation_placeholder)
+
 
         live_updates_placeholder = st.empty()
         stream_area = st.container()
         prompt = st.chat_input("Ask anything about the tickets", key="chat_prompt")
         if prompt:
             st.session_state.full_query_text = prompt
-            main_agent_run(stream_area, conversation_placeholder, live_updates_placeholder)
+            run_agent_for("global", stream_area, conversation_placeholder, live_updates_placeholder)
     with tab_table:
 
         st.session_state.df = load_ticket_dataframe(DATA_URL)
@@ -1110,6 +1129,21 @@ if __name__ == "__main__":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
+            fp = df_fingerprint(filtered_df)
+            if st.session_state["filtered_vector_scope_hash"] != fp:
+                init_agent_state("filtered")
+                st.session_state["filtered_vector_scope_hash"] = fp
+
+            st.markdown("### Ask AI about these filtered tickets")
+
+            chat_box = st.empty()
+            render_conversation_for("filtered", chat_box)
+
+            prompt = st.chat_input("Ask about these tickets", key="filtered_chat")
+            if prompt:
+                st.session_state["filtered_full_query_text"] = prompt
+                run_agent_for("filtered", allowed_df=filtered_df, conversation_placeholder=chat_box)
+
 
         with st.expander("Summarise Filtered Tickets"):
             st.markdown("### Summarise Filtered Tickets")
@@ -1147,6 +1181,7 @@ if __name__ == "__main__":
         st.divider()
         st.write("© 2025 Country Delight")
         st.write("Built with ❤️ by Digital Innovations Team | Country Delight")
+
 
 
 
