@@ -1,0 +1,9 @@
+dspy
+agno
+openpyxl
+scikit-learn
+streamlit-theme
+pandas
+numpy
+plotly
+
