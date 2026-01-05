@@ -1134,7 +1134,7 @@ if __name__ == "__main__":
                 init_agent_state("filtered")
                 st.session_state["filtered_vector_scope_hash"] = fp
 
-            st.markdown("### Ask AI about these filtered tickets")
+            st.markdown("### Ask AI about this filtered data")
 
             chat_box = st.empty()
             render_conversation_for("filtered", chat_box)
@@ -1181,6 +1181,7 @@ if __name__ == "__main__":
         st.divider()
         st.write("© 2025 Country Delight")
         st.write("Built with ❤️ by Digital Innovations Team | Country Delight")
+
 
 
 
