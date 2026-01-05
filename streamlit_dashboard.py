@@ -700,6 +700,8 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
         return
     st.session_state[f"{prefix}_full_query_text"] = ""
 
+    _original_df = getattr(trend_breakdown, "_ticket_dataframe", None)
+
     # Bind tools to filtered dataframe if provided
     if allowed_df is not None:
         trend_breakdown.register_ticket_dataframe(allowed_df)
@@ -785,6 +787,10 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
         if status_placeholder:
             status_placeholder.error(f"Agent run failed: {exc}")
 
+        # Restore original global dataframe
+        if _original_df is not None:
+            trend_breakdown.register_ticket_dataframe(_original_df)
+
         if user_msgs:
             user_msgs.pop()
         if assistant_stub_index is not None and assistant_msgs:
@@ -804,6 +810,10 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
             user_msgs.pop()
         if assistant_stub_index is not None and assistant_msgs:
             assistant_msgs.pop()
+
+        # Restore original global dataframe
+        if _original_df is not None:
+            trend_breakdown.register_ticket_dataframe(_original_df)
 
         if status_placeholder:
             status_placeholder.error("Agent did not return a response.")
@@ -1179,6 +1189,7 @@ if __name__ == "__main__":
         st.divider()
         st.write("© 2025 Country Delight")
         st.write("Built with ❤️ by Digital Innovations Team | Country Delight")
+
 
 
 
