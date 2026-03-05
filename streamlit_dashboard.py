@@ -451,7 +451,7 @@ def summarise_ticket():
 
 @st.cache_data(show_spinner=False)
 def load_ticket_dataframe(url: str) -> pd.DataFrame:
-    df = pd.read_csv(url, low_memory=False)
+    df = pd.read_csv(url)
     df = df[df["CONCERN AREA NAME"] != "Stop Customer"]
     df = df[df["CONCERN TYPE NAME"] != "Internal"]
     categories = product_category.categories
@@ -1187,6 +1187,7 @@ if __name__ == "__main__":
         st.divider()
         st.write("© 2025 Country Delight")
         st.write("Built with ❤️ by Digital Innovations Team | Country Delight")
+
 
 
 
