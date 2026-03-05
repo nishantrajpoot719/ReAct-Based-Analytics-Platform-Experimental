@@ -1,6 +1,7 @@
 dspy
 agno
 openpyxl
+streamlit==1.32.2
 scikit-learn
 streamlit-theme
 pandas
