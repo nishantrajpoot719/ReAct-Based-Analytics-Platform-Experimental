@@ -451,7 +451,7 @@ def summarise_ticket():
 
 @st.cache_data(show_spinner=False)
 def load_ticket_dataframe(url: str) -> pd.DataFrame:
-    df = pd.read_csv(url)
+    df = pd.read_csv(url, low_memory=False)
     df = df[df["CONCERN AREA NAME"] != "Stop Customer"]
     df = df[df["CONCERN TYPE NAME"] != "Internal"]
     categories = product_category.categories
@@ -996,15 +996,15 @@ if __name__ == "__main__":
             with col_4:
                 st.markdown("**Level 2 Focus Areas**")
                 level2_counts = df['level_2_classification'].value_counts().head(10)
-                st.bar_chart(level2_counts, horizontal=True, x_label='Count', y_label='Issue', width = 'content', sort = '-count', color = "#FF7633")
+                st.bar_chart(level2_counts, x_label='Count', y_label='Issue', width = 'content', horizontal=True, sort = '-count', color = "#FF7633")
             with col_5:
                 st.markdown("**Top Products**")
                 product_counts = df['product'].value_counts().head(10)
-                st.bar_chart(product_counts, horizontal=True, x_label='Count', y_label='Product', width = 'content', sort = '-count', color = "#337EFF")
+                st.bar_chart(product_counts, x_label='Count', y_label='Product', width = 'content', horizontal=True, sort = '-count', color = "#337EFF")
             with col_6:
                 st.markdown("**Tickets by City**")
                 city_counts = df['city'].value_counts().head(10)
-                st.bar_chart(city_counts, horizontal=True, x_label='Count', y_label='City', width = 'content', sort = '-count', color = "#FFEB33")
+                st.bar_chart(city_counts, x_label='Count', y_label='City', width = 'content', horizontal=True, sort = '-count', color = "#FFEB33")
 
 
         filter_config = [
@@ -1095,15 +1095,15 @@ if __name__ == "__main__":
                 with col_24:
                     st.markdown("**Level 2 Focus Areas (Filtered)**")
                     level2_filtered = filtered_df['level_2_classification'].value_counts().head(10)
-                    st.bar_chart(level2_filtered, horizontal=True, x_label='Count', y_label='Issue', width = 'content', sort='-count', color = "#FFCF33")
+                    st.bar_chart(level2_filtered, x_label='Count', y_label='Issue', width = 'content', horizontal=True, sort='-count', color = "#FFCF33")
                 with col_25:
                     st.markdown("**Top Products (Filtered)**")
                     product_filtered = filtered_df['product'].value_counts().head(10)
-                    st.bar_chart(product_filtered, horizontal=True, x_label='Count', y_label='Product', width = 'content', sort='-count', color = "#FF337A")
+                    st.bar_chart(product_filtered, x_label='Count', y_label='Product', width = 'content', horizontal=True, sort='-count', color = "#FF337A")
                 with col_26:
                     st.markdown("**Tickets by City (Filtered)**")
                     city_filtered = filtered_df['city'].value_counts().head(10)
-                    st.bar_chart(city_filtered, horizontal=True, x_label='Count', y_label='City', width = 'content', sort='-count', color = "#336DFF")
+                    st.bar_chart(city_filtered, x_label='Count', y_label='City', width = 'content', horizontal=True, sort='-count', color = "#336DFF")
 
                 
 
@@ -1181,6 +1181,7 @@ if __name__ == "__main__":
         st.divider()
         st.write("© 2025 Country Delight")
         st.write("Built with ❤️ by Digital Innovations Team | Country Delight")
+
 
 
 
