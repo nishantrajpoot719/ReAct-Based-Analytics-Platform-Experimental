@@ -1125,7 +1125,7 @@ if __name__ == "__main__":
             if filtered_df.empty:
                 st.info("Try broadening the filters to explore more tickets.")
             else:
-                st.dataframe(filtered_df, width = 'content')
+                st.dataframe(filtered_df, width="stretch")
             excel_data = convert_filtered_df_to_excel(filtered_df)
 
             st.download_button(
@@ -1187,6 +1187,7 @@ if __name__ == "__main__":
         st.divider()
         st.write("© 2025 Country Delight")
         st.write("Built with ❤️ by Digital Innovations Team | Country Delight")
+
 
 
 
