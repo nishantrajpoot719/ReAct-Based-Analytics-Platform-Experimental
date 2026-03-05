@@ -6,4 +6,4 @@ streamlit-theme
 pandas
 numpy
 plotly
-
+altair==4.2.2
