@@ -600,19 +600,23 @@ def render_conversation_for(prefix, placeholder):
                             render_assistant_message(assistant_msg)
 
             # === Parity: Agent reasoning trace ===
+            # st.popover (not st.expander) because this function is also called
+            # from inside "View Filtered Tickets", which is itself an expander;
+            # Streamlit disallows nesting an expander inside another expander.
             last_trace = st.session_state.get(f"{prefix}_agent_last_step_trace")
             if last_trace:
-                with st.expander("Latest agent steps"):
+                with st.popover("Latest agent steps"):
                     st.markdown(last_trace)
 
             # === Parity: Tool call trace ===
             tool_events = st.session_state.get(f"{prefix}_agent_tool_events", [])
             if tool_events:
-                with st.expander("Tool call trace"):
+                with st.popover("Tool call trace"):
                     st.markdown("\n".join(f"- {event}" for event in tool_events))
 
     except Exception as exc:
         # Same crash-protection behavior as original
+        agent_logger.exception("render_conversation_for[%s]: FAILED", prefix)
         st.error("Failed to render chat")
         st.write(exc)
 
