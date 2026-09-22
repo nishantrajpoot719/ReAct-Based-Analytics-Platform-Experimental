@@ -270,6 +270,7 @@ THEME_COLORS = {
     },
 }
 
+@st.cache_data(show_spinner=False)
 def convert_filtered_df_to_excel(df):
     log_step("EXCEL: convert_filtered_df_to_excel start rows=%d cols=%d", len(df), len(df.columns))
     try:
@@ -282,10 +283,16 @@ def convert_filtered_df_to_excel(df):
             # Access workbook + sheet
             ws = writer.book["Filtered_Tickets"]
 
-            # Auto-adjust column width (important for usability)
-            for column_cells in ws.columns:
-                length = max(len(str(cell.value)) if cell.value else 0 for cell in column_cells)
-                ws.column_dimensions[column_cells[0].column_letter].width = min(length + 3, 40)
+            # Auto-adjust column width (vectorized over the dataframe instead of
+            # iterating every openpyxl cell object, which is far slower for
+            # large sheets and was blocking the app long enough to fail
+            # Streamlit Cloud's health check).
+            from openpyxl.utils import get_column_letter
+            header_lengths = [len(str(col)) for col in df.columns]
+            value_lengths = df.astype(str).apply(lambda s: s.str.len().max()).fillna(0)
+            for idx, col in enumerate(df.columns, start=1):
+                length = max(header_lengths[idx - 1], int(value_lengths[col]))
+                ws.column_dimensions[get_column_letter(idx)].width = min(length + 3, 40)
             log_step("EXCEL: column widths adjusted")
 
             # Freeze header row
@@ -1223,16 +1230,19 @@ def render_app():
                 st.dataframe(filtered_df)
                 log_step("MAIN[tab_table]: st.dataframe(filtered_df) rendered OK")
 
-            log_step("MAIN[tab_table]: converting filtered_df to excel for download button")
-            excel_data = convert_filtered_df_to_excel(filtered_df)
-            log_step("MAIN[tab_table]: excel conversion OK, bytes=%d", len(excel_data))
+            if not filtered_df.empty:
+                if st.button("Prepare Excel Download", key="prepare_excel_download"):
+                    log_step("MAIN[tab_table]: converting filtered_df to excel for download button")
+                    st.session_state["filtered_excel_bytes"] = convert_filtered_df_to_excel(filtered_df)
+                    log_step("MAIN[tab_table]: excel conversion OK, bytes=%d", len(st.session_state["filtered_excel_bytes"]))
 
-            st.download_button(
-                label="Download Filtered Data",
-                data=excel_data,
-                file_name="filtered_data.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                if st.session_state.get("filtered_excel_bytes"):
+                    st.download_button(
+                        label="Download Filtered Data",
+                        data=st.session_state["filtered_excel_bytes"],
+                        file_name="filtered_data.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
 
             log_step("MAIN[tab_table]: computing df_fingerprint(filtered_df)")
             fp = df_fingerprint(filtered_df)
