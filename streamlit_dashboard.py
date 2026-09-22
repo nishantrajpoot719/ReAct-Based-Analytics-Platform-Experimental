@@ -271,26 +271,34 @@ THEME_COLORS = {
 }
 
 def convert_filtered_df_to_excel(df):
-    output = io.BytesIO()
+    log_step("EXCEL: convert_filtered_df_to_excel start rows=%d cols=%d", len(df), len(df.columns))
+    try:
+        output = io.BytesIO()
 
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Filtered_Tickets")
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Filtered_Tickets")
+            log_step("EXCEL: df.to_excel written")
 
-        # Access workbook + sheet
-        ws = writer.book["Filtered_Tickets"]
+            # Access workbook + sheet
+            ws = writer.book["Filtered_Tickets"]
 
-        # Auto-adjust column width (important for usability)
-        for column_cells in ws.columns:
-            length = max(len(str(cell.value)) if cell.value else 0 for cell in column_cells)
-            ws.column_dimensions[column_cells[0].column_letter].width = min(length + 3, 40)
+            # Auto-adjust column width (important for usability)
+            for column_cells in ws.columns:
+                length = max(len(str(cell.value)) if cell.value else 0 for cell in column_cells)
+                ws.column_dimensions[column_cells[0].column_letter].width = min(length + 3, 40)
+            log_step("EXCEL: column widths adjusted")
 
-        # Freeze header row
-        ws.freeze_panes = "A2"
+            # Freeze header row
+            ws.freeze_panes = "A2"
 
-        # Turn on filters
-        ws.auto_filter.ref = ws.dimensions
+            # Turn on filters
+            ws.auto_filter.ref = ws.dimensions
 
-    return output.getvalue()
+        log_step("EXCEL: convert_filtered_df_to_excel done")
+        return output.getvalue()
+    except Exception:
+        agent_logger.exception("EXCEL: convert_filtered_df_to_excel FAILED")
+        raise
 
 
 def detect_base_theme() -> str:
@@ -1135,6 +1143,7 @@ def render_app():
         filtered_df = st.session_state.filtered_df
         log_step("MAIN[tab_table]: filtered_df rows=%d", len(filtered_df))
 
+        log_step("MAIN[tab_table]: opening 'Filtered Ticket Snapshot and Distribution' expander")
         with st.expander("Filtered Ticket Snapshot and Distribution"):
             render_section_divider()
             render_kpi_cards(
@@ -1195,13 +1204,14 @@ def render_app():
                     st.bar_chart(city_filtered)
                     # st.bar_chart(city_filtered, x_label='Count', y_label='City', width = 'content', horizontal=True, sort='-count', color = "#336DFF")
 
-                
+        log_step("MAIN[tab_table]: 'Filtered Ticket Snapshot and Distribution' expander rendered OK")
 
         filtered_count = len(filtered_df)
         if filtered_count:
             caption = f"{filtered_count:,} tickets match the current filters."
         else:
             caption = "No tickets match the current filters. Adjust your selections above to see results."  
+        log_step("MAIN[tab_table]: opening 'View Filtered Tickets' expander, rows=%d", filtered_count)
         with st.expander("View Filtered Tickets"):
             st.markdown('### Ticket Details')
             st.write(caption)
@@ -1209,8 +1219,13 @@ def render_app():
             if filtered_df.empty:
                 st.info("Try broadening the filters to explore more tickets.")
             else:
+                log_step("MAIN[tab_table]: calling st.dataframe(filtered_df) rows=%d", len(filtered_df))
                 st.dataframe(filtered_df)
+                log_step("MAIN[tab_table]: st.dataframe(filtered_df) rendered OK")
+
+            log_step("MAIN[tab_table]: converting filtered_df to excel for download button")
             excel_data = convert_filtered_df_to_excel(filtered_df)
+            log_step("MAIN[tab_table]: excel conversion OK, bytes=%d", len(excel_data))
 
             st.download_button(
                 label="Download Filtered Data",
@@ -1219,7 +1234,9 @@ def render_app():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
+            log_step("MAIN[tab_table]: computing df_fingerprint(filtered_df)")
             fp = df_fingerprint(filtered_df)
+            log_step("MAIN[tab_table]: df_fingerprint OK")
             if st.session_state["filtered_vector_scope_hash"] != fp:
                 init_agent_state("filtered")
                 st.session_state["filtered_vector_scope_hash"] = fp
@@ -1234,7 +1251,7 @@ def render_app():
                 st.session_state["filtered_full_query_text"] = prompt
                 run_agent_for("filtered", allowed_df=filtered_df, stream_area = stream_area, conversation_placeholder=chat_box, live_updates_placeholder = live_updates_placeholder)
 
-
+        log_step("MAIN[tab_table]: 'View Filtered Tickets' expander done, opening 'Summarise Filtered Tickets'")
         with st.expander("Summarise Filtered Tickets"):
             st.markdown("### Summarise Filtered Tickets")
             st.write("Generate a concise summary of the filtered tickets, focusing on specific aspects if desired.")
