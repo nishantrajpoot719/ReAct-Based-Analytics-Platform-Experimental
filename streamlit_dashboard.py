@@ -451,7 +451,7 @@ def summarise_ticket():
 
 @st.cache_data(show_spinner=False)
 def load_ticket_dataframe(url: str) -> pd.DataFrame:
-    df = pd.read_csv(url)
+    df = pd.read_csv(url, low_memory=False)
     df = df[df["CONCERN AREA NAME"] != "Stop Customer"]
     df = df[df["CONCERN TYPE NAME"] != "Internal"]
     categories = product_category.categories
