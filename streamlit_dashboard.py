@@ -491,6 +491,7 @@ if 'agent_tool_events' not in st.session_state:
 if 'filters_created' not in st.session_state:
     st.session_state.filters_created = []
 cerebras_key = st.secrets.get("CEREBRAS_API_KEY")
+groq_key = st.secrets.get("GROQ_API_KEY")
 log_step("CONFIG: CEREBRAS_API_KEY set=%s", bool(cerebras_key))
 if not cerebras_key:
     st.session_state.summary_output = "API key not configured. Check Streamlit Cloud secrets."
@@ -831,10 +832,12 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
         with dspy.context(
             lm=dspy.LM(
                 model="openai/gpt-oss-120b",
-                api_key=cerebras_key,
+                # api_key=cerebras_key,
+                api_key=groq_key,
                 temperature=1,
                 max_tokens=32000,
-                api_base="https://api.cerebras.ai/v1",
+                # api_base="https://api.cerebras.ai/v1",
+                api_base="https://api.groq.com/openai/v1",
             )
         ):
             for chunk in stream_main_agent(
