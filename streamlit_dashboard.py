@@ -827,6 +827,7 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
 
     try:
         log_step("AGENT[%s]: configuring dspy.LM and starting stream", prefix)
+        chunk_count = 0
         with dspy.context(
             lm=dspy.LM(
                 model="openai/gpt-oss-120b",
@@ -842,7 +843,10 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
                 assistant_history=prior_assistant_history,
                 filters=st.session_state[f"{prefix}_filters_created"],
             ):
+                chunk_count += 1
+
                 if isinstance(chunk, StatusMessage):
+                    log_step("AGENT[%s]: chunk #%d StatusMessage: %s", prefix, chunk_count, chunk.message)
                     status_updates.append(chunk.message)
                     if status_placeholder:
                         status_placeholder.markdown(
@@ -851,6 +855,10 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
                     continue
 
                 if isinstance(chunk, StreamResponse):
+                    log_step(
+                        "AGENT[%s]: chunk #%d StreamResponse predict_name=%s field=%s len=%d",
+                        prefix, chunk_count, chunk.predict_name, chunk.signature_field_name, len(chunk.chunk or ""),
+                    )
                     key = (chunk.predict_name, chunk.signature_field_name)
                     aggregated_streams[key] += chunk.chunk
 
@@ -863,7 +871,13 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
                     continue
 
                 if isinstance(chunk, dspy.Prediction):
+                    log_step("AGENT[%s]: chunk #%d dspy.Prediction received, fields=%s", prefix, chunk_count, list(chunk.keys()) if hasattr(chunk, "keys") else None)
                     final_prediction = chunk
+                    continue
+
+                log_step("AGENT[%s]: chunk #%d UNRECOGNIZED type=%s repr=%.200r", prefix, chunk_count, type(chunk), chunk)
+
+            log_step("AGENT[%s]: stream exhausted, total_chunks=%d, final_prediction_set=%s", prefix, chunk_count, final_prediction is not None)
 
         captured_chart_specs.extend(_collect_chart_specs_from_streams(aggregated_streams))
         log_step("AGENT[%s]: stream completed, final_prediction_received=%s", prefix, final_prediction is not None)
