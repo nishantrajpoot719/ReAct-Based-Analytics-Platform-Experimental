@@ -831,7 +831,7 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
         chunk_count = 0
         with dspy.context(
             lm=dspy.LM(
-                model="openai/gpt-oss-120b",
+                model="openai/openai/gpt-oss-120b",
                 # api_key=cerebras_key,
                 api_key=groq_key,
                 temperature=1,
