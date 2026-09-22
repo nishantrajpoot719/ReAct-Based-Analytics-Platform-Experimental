@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
 
 import pandas as pd
 
 from . import resolve_filter
+
+logger = logging.getLogger("agent_steps")
 
 # Mapping of resolve_filter.update_catalogs keyword args to dataframe columns.
 _CATALOG_COLUMN_MAP: Dict[str, str] = {
@@ -39,6 +42,7 @@ def sync_filter_catalogs(df: pd.DataFrame) -> None:
     resolve_filter module so fuzzy matching works against the full universe.
     """
     if df is None or df.empty:
+        logger.info("catalog_loader: empty/None dataframe, clearing catalogs")
         resolve_filter.update_catalogs(
             products=[],
             regions=[],
@@ -50,8 +54,16 @@ def sync_filter_catalogs(df: pd.DataFrame) -> None:
         )
         return
 
-    payload = {
-        key: _collect_unique(df, column)
-        for key, column in _CATALOG_COLUMN_MAP.items()
-    }
-    resolve_filter.update_catalogs(**payload)
+    try:
+        payload = {
+            key: _collect_unique(df, column)
+            for key, column in _CATALOG_COLUMN_MAP.items()
+        }
+        resolve_filter.update_catalogs(**payload)
+        logger.info(
+            "catalog_loader: synced catalogs, sizes=%s",
+            {k: len(v) for k, v in payload.items()},
+        )
+    except Exception:
+        logger.exception("catalog_loader: sync_filter_catalogs FAILED")
+        raise

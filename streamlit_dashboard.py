@@ -1,48 +1,89 @@
-import streamlit as st
-import pandas as pd
-import dspy
-import io
-from typing import List, Optional, Any, Dict, Tuple, Set
-import os
-import json
+import sys
 import logging
-from pathlib import Path
-from collections import defaultdict
-from itertools import zip_longest
-from contextlib import nullcontext
-import zipfile
-import datetime
-import plotly.express as px
-import numpy as np
-import product_category
-import requests
-import tools.calculate_metrics as calculate_metrics
-import tools.trend_breakdown as trend_breakdown
-import tools.plot_chart as plot_chart
-import tools.resolve_filter as resolve_filter
-import tools.catalog_loader as catalog_loader
-import tools.get_examples as get_examples
-import tools.ticket_summariser as ticket_summariser
-from dspy.streaming import StreamListener, StatusMessage, StreamResponse, StatusMessageProvider
+
+# --- Logging: configured FIRST, before any import that could fail, and
+# streamed to stdout so it shows up in the Streamlit Cloud "Manage app" log
+# panel (a FileHandler alone is invisible there). ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
+agent_logger = logging.getLogger("agent_steps")
+agent_logger.setLevel(logging.INFO)
+
+
+def log_step(message: str, *args) -> None:
+    """Single choke point for step-by-step tracing; always flushes to stdout."""
+    agent_logger.info(message, *args)
+    for h in agent_logger.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
+
+
+log_step("BOOT: streamlit_dashboard.py starting import phase")
+
+try:
+    log_step("IMPORT: core third-party libs (streamlit, pandas, dspy, ...)")
+    import streamlit as st
+    import pandas as pd
+    import dspy
+    import io
+    from typing import List, Optional, Any, Dict, Tuple, Set
+    import os
+    import json
+    from pathlib import Path
+    from collections import defaultdict
+    from itertools import zip_longest
+    from contextlib import nullcontext
+    import zipfile
+    import datetime
+    import plotly.express as px
+    import numpy as np
+    log_step("IMPORT: core third-party libs OK")
+
+    log_step("IMPORT: local modules (product_category, tools.*)")
+    import product_category
+    import requests
+    import tools.calculate_metrics as calculate_metrics
+    import tools.trend_breakdown as trend_breakdown
+    import tools.plot_chart as plot_chart
+    import tools.resolve_filter as resolve_filter
+    import tools.catalog_loader as catalog_loader
+    import tools.get_examples as get_examples
+    import tools.ticket_summariser as ticket_summariser
+    log_step("IMPORT: local modules OK")
+
+    log_step("IMPORT: dspy.streaming")
+    from dspy.streaming import StreamListener, StatusMessage, StreamResponse, StatusMessageProvider
+    log_step("IMPORT: dspy.streaming OK")
+except Exception:
+    agent_logger.exception("IMPORT FAILED - app cannot start")
+    raise
 
 try:
     from streamlit_theme import st_theme
+    log_step("IMPORT: streamlit_theme OK")
 except ImportError:
     st_theme = None
+    log_step("IMPORT: streamlit_theme not available, continuing without it")
 
+log_step("CONFIG: reading st.secrets")
 DATA_URL = st.secrets.get("DATA_URL")
 FOLDER_ID = st.secrets.get("FOLDER_ID")
+log_step("CONFIG: DATA_URL set=%s FOLDER_ID set=%s", bool(DATA_URL), bool(FOLDER_ID))
 
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 AGENT_LOG_FILE = LOG_DIR / "agent_steps.log"
-
-agent_logger = logging.getLogger("agent_steps")
-if not agent_logger.handlers:
-    handler = logging.FileHandler(AGENT_LOG_FILE, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    agent_logger.addHandler(handler)
-    agent_logger.setLevel(logging.INFO)
+if not any(isinstance(h, logging.FileHandler) for h in agent_logger.handlers):
+    file_handler = logging.FileHandler(AGENT_LOG_FILE, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    agent_logger.addHandler(file_handler)
+log_step("CONFIG: file logging also mirrored to %s", AGENT_LOG_FILE)
 
 import hashlib
 
@@ -70,8 +111,10 @@ def init_agent_state(prefix: str):
         if key not in st.session_state:
             st.session_state[key] = v
 
+log_step("STATE: initializing agent session state (global, filtered)")
 init_agent_state("global")
 init_agent_state("filtered")
+log_step("STATE: agent session state initialized")
 
 
 
@@ -433,6 +476,7 @@ if 'agent_tool_events' not in st.session_state:
 if 'filters_created' not in st.session_state:
     st.session_state.filters_created = []
 cerebras_key = st.secrets.get("CEREBRAS_API_KEY")
+log_step("CONFIG: CEREBRAS_API_KEY set=%s", bool(cerebras_key))
 if not cerebras_key:
     st.session_state.summary_output = "API key not configured. Check Streamlit Cloud secrets."
     
@@ -451,17 +495,35 @@ def summarise_ticket():
 
 @st.cache_data(show_spinner=False)
 def load_ticket_dataframe(url: str) -> pd.DataFrame:
-    df = pd.read_csv(url, low_memory=False)
-    df = df[df["CONCERN AREA NAME"] != "Stop Customer"]
-    df = df[df["CONCERN TYPE NAME"] != "Internal"]
-    categories = product_category.categories
-    product_to_category = {product: cat for cat, products in categories.items() for product in products}
-    df["product_category"] = df["product"].map(product_to_category).fillna("")
-    df = df.rename(columns=lambda x: x.strip().replace(" ", "_").lower())
-    df.columns = [c.strip() for c in df.columns]
-    df = df[COLUMN_NAMES]
-    df["created_date"] = pd.to_datetime(df["created_date"], errors="coerce").dt.date
-    return df
+    log_step("DATA: load_ticket_dataframe start url_set=%s", bool(url))
+    try:
+        df = pd.read_csv(url, low_memory=False)
+        log_step("DATA: read_csv OK rows=%d cols=%s", len(df), list(df.columns))
+
+        df = df[df["CONCERN AREA NAME"] != "Stop Customer"]
+        df = df[df["CONCERN TYPE NAME"] != "Internal"]
+        log_step("DATA: excluded Stop Customer / Internal rows, rows=%d", len(df))
+
+        categories = product_category.categories
+        product_to_category = {product: cat for cat, products in categories.items() for product in products}
+        df["product_category"] = df["product"].map(product_to_category).fillna("")
+        log_step("DATA: product_category mapped")
+
+        df = df.rename(columns=lambda x: x.strip().replace(" ", "_").lower())
+        df.columns = [c.strip() for c in df.columns]
+        log_step("DATA: columns normalized -> %s", list(df.columns))
+
+        missing_cols = [c for c in COLUMN_NAMES if c not in df.columns]
+        if missing_cols:
+            log_step("DATA: MISSING expected columns after normalization: %s", missing_cols)
+        df = df[COLUMN_NAMES]
+
+        df["created_date"] = pd.to_datetime(df["created_date"], errors="coerce").dt.date
+        log_step("DATA: load_ticket_dataframe done rows=%d", len(df))
+        return df
+    except Exception:
+        agent_logger.exception("DATA: load_ticket_dataframe FAILED")
+        raise
 
 
 def apply_selected_filters(df: pd.DataFrame, selections: dict, exclude: Optional[str] = None) -> pd.DataFrame:
@@ -665,6 +727,7 @@ def _google_api_key():
     return st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
 def _drive_list(folder_id: str, api_key: str):
+    log_step("DRIVE: listing files in folder_id=%s", folder_id)
     url = (
         "https://www.googleapis.com/drive/v3/files"
         f"?q='{folder_id}'+in+parents"
@@ -672,9 +735,12 @@ def _drive_list(folder_id: str, api_key: str):
         f"&key={api_key}"
     )
     r = requests.get(url, timeout=30); r.raise_for_status()
-    return r.json().get("files", []) or []
+    files = r.json().get("files", []) or []
+    log_step("DRIVE: list returned %d file(s)", len(files))
+    return files
 
 def _drive_get_shortcut_target(file_id: str, api_key: str):
+    log_step("DRIVE: resolving shortcut target for file_id=%s", file_id)
     url = f"https://www.googleapis.com/drive/v3/files/{file_id}?fields=id,name,mimeType,shortcutDetails(targetId,targetMimeType)&key={api_key}"
     r = requests.get(url, timeout=30); r.raise_for_status()
     j = r.json()
@@ -684,6 +750,7 @@ def _drive_get_shortcut_target(file_id: str, api_key: str):
     return file_id, j.get("name"), j.get("mimeType")
 
 def _drive_download(file_id: str, out_path: str, api_key: str):
+    log_step("DRIVE: downloading file_id=%s to %s", file_id, out_path)
     url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media&key={api_key}"
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with requests.get(url, stream=True, timeout=120) as resp:
@@ -692,12 +759,14 @@ def _drive_download(file_id: str, out_path: str, api_key: str):
             for chunk in resp.iter_content(1024 * 256):
                 if chunk:
                     f.write(chunk)
+    log_step("DRIVE: download complete -> %s", out_path)
     return out_path
 
 def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeholder=None, live_updates_placeholder=None):
     query = st.session_state.get(f"{prefix}_full_query_text", "").strip()
     if not query:
         return
+    log_step("AGENT[%s]: run start query=%r", prefix, query[:200])
     st.session_state[f"{prefix}_full_query_text"] = ""
 
     # Bind tools to filtered dataframe if provided
@@ -738,6 +807,7 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
         assistant_stream_placeholder.markdown("...")
 
     try:
+        log_step("AGENT[%s]: configuring dspy.LM and starting stream", prefix)
         with dspy.context(
             lm=dspy.LM(
                 model="openai/gpt-oss-120b",
@@ -777,11 +847,13 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
                     final_prediction = chunk
 
         captured_chart_specs.extend(_collect_chart_specs_from_streams(aggregated_streams))
+        log_step("AGENT[%s]: stream completed, final_prediction_received=%s", prefix, final_prediction is not None)
 
         if status_placeholder:
             status_placeholder.success("Response ready.")
 
     except Exception as exc:
+        agent_logger.exception("AGENT[%s]: run FAILED", prefix)
         if status_placeholder:
             status_placeholder.error(f"Agent run failed: {exc}")
 
@@ -882,10 +954,11 @@ def run_agent_for(prefix, allowed_df=None, stream_area=None, conversation_placeh
         
         
         
-if __name__ == "__main__":
-
+def render_app():
+    log_step("MAIN: detecting base theme")
     base_theme = detect_base_theme()
     palette = THEME_COLORS.get(base_theme, THEME_COLORS["light"])
+    log_step("MAIN: base_theme=%s, setting page config", base_theme)
     st.set_page_config(
     page_title="Customer Support Insights",
     page_icon="🧊",
@@ -905,8 +978,10 @@ if __name__ == "__main__":
         unsafe_allow_html=True,
     )
     st.markdown("##### AI-powered analytics over customer support data")
+    log_step("MAIN: page header rendered, building tabs")
 
     tab_agent, tab_table, tab_about = st.tabs(["# AI Assistant", "# Ticket Dashboard", "# About"])
+    log_step("MAIN: entering tab_agent")
     with tab_agent:
         conversation_placeholder = st.empty()
         render_conversation_for("global", conversation_placeholder)
@@ -918,15 +993,21 @@ if __name__ == "__main__":
         if prompt:
             st.session_state["global_full_query_text"] = prompt
             run_agent_for("global", allowed_df=st.session_state.df, stream_area = stream_area, conversation_placeholder = conversation_placeholder, live_updates_placeholder = live_updates_placeholder)
+    log_step("MAIN: tab_agent done, entering tab_table")
     with tab_table:
 
+        log_step("MAIN[tab_table]: loading ticket dataframe")
         st.session_state.df = load_ticket_dataframe(DATA_URL)
         df = st.session_state.df
+        log_step("MAIN[tab_table]: syncing filter catalogs")
         catalog_loader.sync_filter_catalogs(df)
+        log_step("MAIN[tab_table]: registering ticket dataframe for trend_breakdown")
         trend_breakdown.register_ticket_dataframe(df)
         if not st.session_state.vector_db_initialized:
+            log_step("MAIN[tab_table]: vector_db not initialized, checking staleness")
             latest_date_in_data = df["created_date"].max()
             if pd.notna(latest_date_in_data) and today_date > latest_date_in_data:
+                log_step("MAIN[tab_table]: data stale (latest=%s, today=%s), attempting Drive refresh", latest_date_in_data, today_date)
                 api_key = _google_api_key()
                 
                 if not api_key:
@@ -951,6 +1032,7 @@ if __name__ == "__main__":
                             st.success(f"Downloaded and extracted: {fname}")
 
             st.session_state.vector_db_initialized = True
+        log_step("MAIN[tab_table]: rendering overall distribution charts, rows=%d", len(df))
         st.markdown("You can use this to manually explore the tickets and summarise them, while visualising basic overall data distribution")
         with st.expander("Overall Ticket Distribution"):
             render_kpi_cards(
@@ -1048,9 +1130,11 @@ if __name__ == "__main__":
         selected_filters["product_category"] = st.multiselect("Product Category", product_categories, key="filter_product_category")
             
 
+        log_step("MAIN[tab_table]: applying selected filters=%s", {k: v for k, v in selected_filters.items() if v})
         st.session_state.filtered_df = apply_selected_filters(df, selected_filters).copy()
         filtered_df = st.session_state.filtered_df
-        
+        log_step("MAIN[tab_table]: filtered_df rows=%d", len(filtered_df))
+
         with st.expander("Filtered Ticket Snapshot and Distribution"):
             render_section_divider()
             render_kpi_cards(
@@ -1172,6 +1256,7 @@ if __name__ == "__main__":
             st.button('Generate Summary', on_click=summarise_ticket, type="primary")
             st.markdown(st.session_state.summary_output or "*No summary generated yet.*")
 
+    log_step("MAIN: tab_table done, entering tab_about")
     with tab_about:
         st.markdown("### About This Dashboard")
         st.write(
@@ -1187,6 +1272,18 @@ if __name__ == "__main__":
         st.divider()
         st.write("© 2025 Country Delight")
         st.write("Built with ❤️ by Digital Innovations Team | Country Delight")
+    log_step("MAIN: render_app() finished rendering all tabs")
+
+
+if __name__ == "__main__":
+    try:
+        log_step("MAIN: render_app() starting")
+        render_app()
+        log_step("MAIN: render_app() completed successfully")
+    except Exception:
+        agent_logger.exception("MAIN: render_app() FAILED - uncaught exception, see traceback above")
+        st.exception(sys.exc_info()[1])
+        raise
 
 
 

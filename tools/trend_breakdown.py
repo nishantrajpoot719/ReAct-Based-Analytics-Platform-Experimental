@@ -8,7 +8,7 @@ import pandas as pd
 
 from . import resolve_filter
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("agent_steps")
 
 ACTIVE_TICKETS_DF: Optional[pd.DataFrame] = None
 
@@ -16,7 +16,7 @@ ACTIVE_TICKETS_DF: Optional[pd.DataFrame] = None
 def register_ticket_dataframe(df) -> None:
     global ACTIVE_TICKETS_DF
     ACTIVE_TICKETS_DF = df
-    logger.debug("Registered ticket dataframe", extra={"rows": len(df)})
+    logger.info("trend_breakdown: registered ticket dataframe rows=%s", len(df) if df is not None else 0)
 
 
 def get_registered_dataframe():
